@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-# bot.py - AntAutoSurf Bot per Render con riavvio automatico
+# bot.py - AntAutoSurf Bot con ricerca proxy automatica
 
 import os
 import time
@@ -13,6 +13,7 @@ from datetime import datetime
 import imagehash
 from PIL import Image
 import io
+from concurrent.futures import ThreadPoolExecutor, as_completed
 
 # ============================================================
 # CONFIGURAZIONE DA VARIABILI D'AMBIENTE
@@ -21,7 +22,7 @@ EMAIL = os.environ.get("EMAIL", "kavonobenna@gmail.com")
 PASSWORD = os.environ.get("PASSWORD", "DF45$!sada")
 HEADLESS = os.environ.get("HEADLESS", "True").lower() == "true"
 
-# Proxy (opzionale)
+# Proxy (opzionale - se impostato manualmente)
 PROXY_HOST = os.environ.get("PROXY_HOST")
 PROXY_PORT = os.environ.get("PROXY_PORT")
 PROXY_USER = os.environ.get("PROXY_USER")
@@ -51,30 +52,130 @@ phash_db = carica_database()
 log(f"📊 Database phash: {len(phash_db)} hash")
 
 # ============================================================
-# VERIFICA PROXY
+# PROXY FINDER - CERCA PROXY PUBBLICI GRATUITI
 # ============================================================
-def verifica_proxy(host, port, user, pwd):
-    """Verifica che il proxy sia raggiungibile"""
-    if not host or not user:
-        return True
-    
+PROXY_SOURCES = [
+    "https://api.proxyscrape.com/v2/?request=displayproxies&protocol=http&timeout=10000&country=all&ssl=all&anonymity=all",
+    "https://www.sslproxies.org/",
+    "https://free-proxy-list.net/",
+    "https://api.proxyscrape.com/?request=displayproxies&proxytype=http",
+]
+
+def scarica_proxy_da_url(url):
+    """Scarica lista proxy da URL"""
     try:
+        response = requests.get(url, timeout=10)
+        if response.status_code == 200:
+            proxies = []
+            for line in response.text.splitlines():
+                line = line.strip()
+                if line and not line.startswith('#') and not line.startswith('<!'):
+                    if ':' in line:
+                        parts = line.split(':')
+                        if len(parts) == 2:
+                            try:
+                                port = int(parts[1])
+                                proxies.append({"host": parts[0], "port": port})
+                            except:
+                                pass
+            return proxies
+    except Exception as e:
+        log(f"   ⚠️ Errore scaricamento: {e}")
+    return []
+
+def ottieni_proxy_pubblici():
+    """Ottiene lista di proxy pubblici da tutte le fonti"""
+    all_proxies = []
+    log("📥 Scarico proxy pubblici...")
+    
+    for url in PROXY_SOURCES:
+        proxies = scarica_proxy_da_url(url)
+        if proxies:
+            log(f"   Trovati: {len(proxies)} proxy")
+            all_proxies.extend(proxies)
+    
+    # Rimuovi duplicati
+    unique = []
+    seen = set()
+    for p in all_proxies:
+        key = f"{p['host']}:{p['port']}"
+        if key not in seen:
+            seen.add(key)
+            unique.append(p)
+    
+    log(f"✅ Proxy unici: {len(unique)}")
+    return unique
+
+def verifica_proxy(proxy, timeout=5):
+    """Verifica se un proxy è raggiungibile"""
+    try:
+        host = proxy["host"]
+        port = proxy["port"]
+        
+        proxies = {
+            "http": f"http://{host}:{port}",
+            "https": f"http://{host}:{port}"
+        }
+        
         response = requests.get(
             "http://httpbin.org/ip",
-            proxies={
-                "http": f"http://{user}:{pwd}@{host}:{port}",
-                "https": f"http://{user}:{pwd}@{host}:{port}"
-            },
-            timeout=10
+            proxies=proxies,
+            timeout=timeout
         )
+        
         if response.status_code == 200:
-            log(f"✅ Proxy raggiungibile! IP: {response.json()['origin']}")
-            return True
-    except Exception as e:
-        log(f"⚠️ Proxy non raggiungibile: {e}")
-        return False
+            return proxy, True
+    except:
+        pass
+    return proxy, False
+
+def trova_proxy_funzionante(proxy_list, max_workers=30):
+    """Trova il primo proxy funzionante"""
+    if not proxy_list:
+        return None
     
-    return False
+    log(f"🔍 Cerco proxy funzionante tra {len(proxy_list)}...")
+    
+    with ThreadPoolExecutor(max_workers=max_workers) as executor:
+        futures = {executor.submit(verifica_proxy, p): p for p in proxy_list[:200]}
+        
+        for future in as_completed(futures):
+            proxy, ok = future.result()
+            if ok:
+                log(f"✅ Proxy trovato: {proxy['host']}:{proxy['port']}")
+                return proxy
+    
+    log("❌ Nessun proxy funzionante trovato!")
+    return None
+
+def ottieni_proxy_automatico():
+    """Ottiene un proxy funzionante automaticamente"""
+    
+    # Se è già configurato un proxy manuale, verificalo
+    if PROXY_HOST and PROXY_USER:
+        proxy = {
+            "host": PROXY_HOST,
+            "port": int(PROXY_PORT) if PROXY_PORT else 3128,
+            "user": PROXY_USER,
+            "pass": PROXY_PASS
+        }
+        log(f"🔍 Verifico proxy manuale: {PROXY_HOST}:{PROXY_PORT}")
+        ok, _ = verifica_proxy(proxy)
+        if ok:
+            log(f"✅ Proxy manuale funzionante!")
+            return proxy
+        else:
+            log("⚠️ Proxy manuale non funzionante, cerco alternativo...")
+    
+    # Cerca proxy pubblici
+    proxy_list = ottieni_proxy_pubblici()
+    if proxy_list:
+        proxy = trova_proxy_funzionante(proxy_list)
+        if proxy:
+            return proxy
+    
+    log("⚠️ Nessun proxy trovato, procedo senza proxy")
+    return None
 
 # ============================================================
 # FUNZIONI DI PULIZIA
@@ -156,20 +257,27 @@ def esegui_bot():
     log(f"🤖 AntAutoSurf Bot - {EMAIL}")
     log(f"🔇 Headless: {HEADLESS}")
     
-    # Configura proxy
+    # Ottieni proxy automaticamente
+    proxy = ottieni_proxy_automatico()
+    
     proxy_config = None
-    if PROXY_HOST and PROXY_USER:
-        log(f"🌐 Proxy: {PROXY_HOST}:{PROXY_PORT}")
-        log(f"   👤 User: {PROXY_USER}")
+    if proxy:
+        host = proxy.get("host")
+        port = proxy.get("port")
+        user = proxy.get("user", "")
+        pwd = proxy.get("pass", "")
         
-        # Verifica proxy
-        if not verifica_proxy(PROXY_HOST, PROXY_PORT, PROXY_USER, PROXY_PASS):
-            log("⚠️ Proxy non raggiungibile, procedo senza proxy")
-        else:
+        if user and pwd:
+            log(f"🌐 Proxy: {host}:{port} (con autenticazione)")
             proxy_config = {
-                "server": f"http://{PROXY_HOST}:{PROXY_PORT}",
-                "username": PROXY_USER,
-                "password": PROXY_PASS
+                "server": f"http://{host}:{port}",
+                "username": user,
+                "password": pwd
+            }
+        else:
+            log(f"🌐 Proxy: {host}:{port} (senza autenticazione)")
+            proxy_config = {
+                "server": f"http://{host}:{port}"
             }
     else:
         log("⚠️ Proxy non configurato, procedo senza proxy")
@@ -246,10 +354,11 @@ def esegui_bot():
             ad_id = ""
             cycle = 0
             
-            # 🔥 CONTATORI
+            # Contatori
             csrf_invalidi = 0
             MAX_CSRF_INVALIDI = 5
-            MAX_CYCLES = 5000  # 5000 cicli = ~16-20 ore
+            MAX_CYCLES = 5000
+            proxy_morto = 0
             
             while cycle < MAX_CYCLES:
                 cycle += 1
@@ -271,10 +380,25 @@ def esegui_bot():
                 
                 url = "https://antautosurf.com/surf.php?" + "&".join([f"{k}={v}" for k, v in params.items()])
                 
-                page.goto(url, wait_until="domcontentloaded", timeout=30000)
+                try:
+                    page.goto(url, wait_until="domcontentloaded", timeout=30000)
+                except Exception as e:
+                    if "ERR_TUNNEL_CONNECTION_FAILED" in str(e) or "proxy" in str(e).lower():
+                        log("⚠️ Proxy morto! Cerco nuovo proxy...")
+                        proxy_morto += 1
+                        if proxy_morto >= 3:
+                            log("🔄 Troppi proxy morti, riavvio il bot...")
+                            return
+                        # Ricerca nuovo proxy
+                        nuovo_proxy = ottieni_proxy_automatico()
+                        if nuovo_proxy:
+                            log("✅ Nuovo proxy trovato, riavvio il bot...")
+                            return
+                    continue
+                
                 page_text = page.content()
                 
-                # 🔥 GESTISCI CSRF INVALIDO
+                # Gestisci CSRF invalido
                 if "Invalid CSRF token" in page_text:
                     csrf_invalidi += 1
                     log(f"❌ CSRF invalido! ({csrf_invalidi}/{MAX_CSRF_INVALIDI})")
@@ -350,6 +474,8 @@ def esegui_bot():
             
         except Exception as e:
             log(f"❌ Errore: {e}")
+            if "proxy" in str(e).lower() or "tunnel" in str(e).lower():
+                log("🔄 Errore proxy, riavvio per nuovo proxy...")
         finally:
             browser.close()
 
