@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-# bot.py - AntAutoSurf Bot con ProxyScrape + Proxy Finder
+# bot.py - AntAutoSurf Bot con ricerca proxy automatica
 
 import os
 import time
@@ -22,7 +22,7 @@ EMAIL = os.environ.get("EMAIL", "kavonobenna@gmail.com")
 PASSWORD = os.environ.get("PASSWORD", "DF45$!sada")
 HEADLESS = os.environ.get("HEADLESS", "True").lower() == "true"
 
-# ProxyScrape (opzionale - se impostato manualmente)
+# Proxy (opzionale - se impostato manualmente)
 PROXY_HOST = os.environ.get("PROXY_HOST")
 PROXY_PORT = os.environ.get("PROXY_PORT")
 PROXY_USER = os.environ.get("PROXY_USER")
@@ -52,57 +52,25 @@ phash_db = carica_database()
 log(f"📊 Database phash: {len(phash_db)} hash")
 
 # ============================================================
-# PROXY FINDER - MULTI-FONTE (BACKUP)
+# PROXY FINDER - CERCA PROXY PUBBLICI GRATUITI
 # ============================================================
 PROXY_SOURCES = [
-    # ProxyScrape API
     "https://api.proxyscrape.com/v2/?request=displayproxies&protocol=http&timeout=10000&country=all&ssl=all&anonymity=all",
-    "https://api.proxyscrape.com/v2/?request=displayproxies&protocol=https&timeout=10000&country=all&ssl=all&anonymity=all",
-    "https://api.proxyscrape.com/?request=displayproxies&proxytype=http",
-    "https://api.proxyscrape.com/?request=displayproxies&proxytype=https",
-    
-    # FreeProxyList
-    "https://free-proxy-list.net/",
-    "https://free-proxy-list.net/anonymous-proxy.html",
-    "https://free-proxy-list.net/uk-proxy.html",
-    
-    # SSL Proxies
     "https://www.sslproxies.org/",
-    
-    # Proxy List Download
-    "https://www.proxy-list.download/api/v1/get?type=http",
-    "https://www.proxy-list.download/api/v1/get?type=https",
-    "https://www.proxy-list.download/api/v1/get?type=socks4",
-    "https://www.proxy-list.download/api/v1/get?type=socks5",
-    
-    # GitHub Proxy Lists
-    "https://raw.githubusercontent.com/TheSpeedX/PROXY-List/master/http.txt",
-    "https://raw.githubusercontent.com/TheSpeedX/PROXY-List/master/socks4.txt",
-    "https://raw.githubusercontent.com/TheSpeedX/PROXY-List/master/socks5.txt",
-    "https://raw.githubusercontent.com/ShiftyTR/Proxy-List/master/http.txt",
-    "https://raw.githubusercontent.com/ShiftyTR/Proxy-List/master/https.txt",
-    "https://raw.githubusercontent.com/roosterkid/openproxylist/main/HTTP_RAW.txt",
-    "https://raw.githubusercontent.com/roosterkid/openproxylist/main/HTTPS_RAW.txt",
-    
-    # PubProxy
-    "https://pubproxy.com/api/proxy?limit=50&format=txt&http=true",
-    "https://pubproxy.com/api/proxy?limit=50&format=txt&https=true",
-    
-    # Geonode
-    "https://geonode.com/free-proxy-list/",
+    "https://free-proxy-list.net/",
+    "https://api.proxyscrape.com/?request=displayproxies&proxytype=http",
 ]
 
 def scarica_proxy_da_url(url):
     """Scarica lista proxy da URL"""
     try:
-        response = requests.get(url, timeout=15)
+        response = requests.get(url, timeout=10)
         if response.status_code == 200:
             proxies = []
-            content = response.text
-            for line in content.splitlines():
+            for line in response.text.splitlines():
                 line = line.strip()
                 if line and not line.startswith('#') and not line.startswith('<!'):
-                    if ':' in line and not line.startswith('http'):
+                    if ':' in line:
                         parts = line.split(':')
                         if len(parts) == 2:
                             try:
@@ -110,38 +78,21 @@ def scarica_proxy_da_url(url):
                                 proxies.append({"host": parts[0], "port": port})
                             except:
                                 pass
-                    elif '@' in line and ':' in line:
-                        parts = line.split('@')
-                        if len(parts) == 2:
-                            auth = parts[0]
-                            host_port = parts[1]
-                            if ':' in auth and ':' in host_port:
-                                user_pass = auth.split(':')
-                                host_port_parts = host_port.split(':')
-                                if len(user_pass) == 2 and len(host_port_parts) == 2:
-                                    proxies.append({
-                                        "host": host_port_parts[0],
-                                        "port": int(host_port_parts[1]),
-                                        "user": user_pass[0],
-                                        "pass": user_pass[1]
-                                    })
             return proxies
     except Exception as e:
-        log(f"   ⚠️ Errore scaricamento {url[:50]}: {e}")
+        log(f"   ⚠️ Errore scaricamento: {e}")
     return []
 
 def ottieni_proxy_pubblici():
-    """Ottiene lista di proxy pubblici da TUTTE le fonti"""
+    """Ottiene lista di proxy pubblici da tutte le fonti"""
     all_proxies = []
-    log(f"📥 Scarico proxy da {len(PROXY_SOURCES)} fonti (backup)...")
+    log("📥 Scarico proxy pubblici...")
     
     for url in PROXY_SOURCES:
         proxies = scarica_proxy_da_url(url)
         if proxies:
-            log(f"   ✅ Trovati: {len(proxies)} proxy")
+            log(f"   Trovati: {len(proxies)} proxy")
             all_proxies.extend(proxies)
-        else:
-            log(f"   ⚠️ Nessun proxy da: {url[:50]}...")
     
     # Rimuovi duplicati
     unique = []
@@ -160,19 +111,11 @@ def verifica_proxy(proxy, timeout=5):
     try:
         host = proxy["host"]
         port = proxy["port"]
-        user = proxy.get("user", "")
-        pwd = proxy.get("pass", "")
         
-        if user and pwd:
-            proxies = {
-                "http": f"http://{user}:{pwd}@{host}:{port}",
-                "https": f"http://{user}:{pwd}@{host}:{port}"
-            }
-        else:
-            proxies = {
-                "http": f"http://{host}:{port}",
-                "https": f"http://{host}:{port}"
-            }
+        proxies = {
+            "http": f"http://{host}:{port}",
+            "https": f"http://{host}:{port}"
+        }
         
         response = requests.get(
             "http://httpbin.org/ip",
@@ -186,7 +129,7 @@ def verifica_proxy(proxy, timeout=5):
         pass
     return proxy, False
 
-def trova_proxy_funzionante(proxy_list, max_workers=50):
+def trova_proxy_funzionante(proxy_list, max_workers=30):
     """Trova il primo proxy funzionante"""
     if not proxy_list:
         return None
@@ -194,7 +137,7 @@ def trova_proxy_funzionante(proxy_list, max_workers=50):
     log(f"🔍 Cerco proxy funzionante tra {len(proxy_list)}...")
     
     with ThreadPoolExecutor(max_workers=max_workers) as executor:
-        futures = {executor.submit(verifica_proxy, p): p for p in proxy_list[:500]}
+        futures = {executor.submit(verifica_proxy, p): p for p in proxy_list[:200]}
         
         for future in as_completed(futures):
             proxy, ok = future.result()
@@ -205,13 +148,10 @@ def trova_proxy_funzionante(proxy_list, max_workers=50):
     log("❌ Nessun proxy funzionante trovato!")
     return None
 
-# ============================================================
-# OTTIENI PROXY (PRIMA PROXYSCRAPE, POI FINDER)
-# ============================================================
-def ottieni_proxy():
-    """Prima cerca ProxyScrape, poi Proxy Finder come backup"""
+def ottieni_proxy_automatico():
+    """Ottiene un proxy funzionante automaticamente"""
     
-    # 1. TENTA PROXYSCRAPE (se configurato)
+    # Se è già configurato un proxy manuale, verificalo
     if PROXY_HOST and PROXY_USER:
         proxy = {
             "host": PROXY_HOST,
@@ -219,16 +159,15 @@ def ottieni_proxy():
             "user": PROXY_USER,
             "pass": PROXY_PASS
         }
-        log(f"🔍 Verifico proxy ProxyScrape: {PROXY_HOST}:{PROXY_PORT}")
+        log(f"🔍 Verifico proxy manuale: {PROXY_HOST}:{PROXY_PORT}")
         ok, _ = verifica_proxy(proxy)
         if ok:
-            log(f"✅ Proxy ProxyScrape funzionante!")
+            log(f"✅ Proxy manuale funzionante!")
             return proxy
         else:
-            log("⚠️ Proxy ProxyScrape non funzionante, cerco backup...")
+            log("⚠️ Proxy manuale non funzionante, cerco alternativo...")
     
-    # 2. BACKUP: PROXY FINDER
-    log("🔍 Cerco proxy di backup...")
+    # Cerca proxy pubblici
     proxy_list = ottieni_proxy_pubblici()
     if proxy_list:
         proxy = trova_proxy_funzionante(proxy_list)
@@ -318,8 +257,8 @@ def esegui_bot():
     log(f"🤖 AntAutoSurf Bot - {EMAIL}")
     log(f"🔇 Headless: {HEADLESS}")
     
-    # Ottieni proxy (ProxyScrape + backup)
-    proxy = ottieni_proxy()
+    # Ottieni proxy automaticamente
+    proxy = ottieni_proxy_automatico()
     
     proxy_config = None
     if proxy:
@@ -450,7 +389,8 @@ def esegui_bot():
                         if proxy_morto >= 3:
                             log("🔄 Troppi proxy morti, riavvio il bot...")
                             return
-                        nuovo_proxy = ottieni_proxy()
+                        # Ricerca nuovo proxy
+                        nuovo_proxy = ottieni_proxy_automatico()
                         if nuovo_proxy:
                             log("✅ Nuovo proxy trovato, riavvio il bot...")
                             return
