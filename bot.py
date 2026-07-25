@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-# bot.py - AntAutoSurf Bot con ricerca proxy automatica
+# bot.py - AntAutoSurf Bot con ricerca proxy automatica (MULTI-FONTE)
 
 import os
 import time
@@ -52,25 +52,58 @@ phash_db = carica_database()
 log(f"📊 Database phash: {len(phash_db)} hash")
 
 # ============================================================
-# PROXY FINDER - CERCA PROXY PUBBLICI GRATUITI
+# PROXY FINDER - MULTI-FONTE (TUTTE LE LISTE)
 # ============================================================
 PROXY_SOURCES = [
+    # ProxyScrape API
     "https://api.proxyscrape.com/v2/?request=displayproxies&protocol=http&timeout=10000&country=all&ssl=all&anonymity=all",
-    "https://www.sslproxies.org/",
-    "https://free-proxy-list.net/",
+    "https://api.proxyscrape.com/v2/?request=displayproxies&protocol=https&timeout=10000&country=all&ssl=all&anonymity=all",
     "https://api.proxyscrape.com/?request=displayproxies&proxytype=http",
+    "https://api.proxyscrape.com/?request=displayproxies&proxytype=https",
+    
+    # FreeProxyList
+    "https://free-proxy-list.net/",
+    "https://free-proxy-list.net/anonymous-proxy.html",
+    "https://free-proxy-list.net/uk-proxy.html",
+    
+    # SSL Proxies
+    "https://www.sslproxies.org/",
+    
+    # Proxy List Download
+    "https://www.proxy-list.download/api/v1/get?type=http",
+    "https://www.proxy-list.download/api/v1/get?type=https",
+    "https://www.proxy-list.download/api/v1/get?type=socks4",
+    "https://www.proxy-list.download/api/v1/get?type=socks5",
+    
+    # GitHub Proxy Lists
+    "https://raw.githubusercontent.com/TheSpeedX/PROXY-List/master/http.txt",
+    "https://raw.githubusercontent.com/TheSpeedX/PROXY-List/master/socks4.txt",
+    "https://raw.githubusercontent.com/TheSpeedX/PROXY-List/master/socks5.txt",
+    "https://raw.githubusercontent.com/ShiftyTR/Proxy-List/master/http.txt",
+    "https://raw.githubusercontent.com/ShiftyTR/Proxy-List/master/https.txt",
+    "https://raw.githubusercontent.com/roosterkid/openproxylist/main/HTTP_RAW.txt",
+    "https://raw.githubusercontent.com/roosterkid/openproxylist/main/HTTPS_RAW.txt",
+    
+    # PubProxy
+    "https://pubproxy.com/api/proxy?limit=50&format=txt&http=true",
+    "https://pubproxy.com/api/proxy?limit=50&format=txt&https=true",
+    
+    # Geonode
+    "https://geonode.com/free-proxy-list/",
 ]
 
 def scarica_proxy_da_url(url):
     """Scarica lista proxy da URL"""
     try:
-        response = requests.get(url, timeout=10)
+        response = requests.get(url, timeout=15)
         if response.status_code == 200:
             proxies = []
-            for line in response.text.splitlines():
+            content = response.text
+            for line in content.splitlines():
                 line = line.strip()
                 if line and not line.startswith('#') and not line.startswith('<!'):
-                    if ':' in line:
+                    # Formato IP:PORT
+                    if ':' in line and not line.startswith('http'):
                         parts = line.split(':')
                         if len(parts) == 2:
                             try:
@@ -78,21 +111,39 @@ def scarica_proxy_da_url(url):
                                 proxies.append({"host": parts[0], "port": port})
                             except:
                                 pass
+                    # Formato con user:pass@host:port (ProxyScrape)
+                    elif '@' in line and ':' in line:
+                        parts = line.split('@')
+                        if len(parts) == 2:
+                            auth = parts[0]
+                            host_port = parts[1]
+                            if ':' in auth and ':' in host_port:
+                                user_pass = auth.split(':')
+                                host_port_parts = host_port.split(':')
+                                if len(user_pass) == 2 and len(host_port_parts) == 2:
+                                    proxies.append({
+                                        "host": host_port_parts[0],
+                                        "port": int(host_port_parts[1]),
+                                        "user": user_pass[0],
+                                        "pass": user_pass[1]
+                                    })
             return proxies
     except Exception as e:
-        log(f"   ⚠️ Errore scaricamento: {e}")
+        log(f"   ⚠️ Errore scaricamento {url[:50]}: {e}")
     return []
 
 def ottieni_proxy_pubblici():
-    """Ottiene lista di proxy pubblici da tutte le fonti"""
+    """Ottiene lista di proxy pubblici da TUTTE le fonti"""
     all_proxies = []
-    log("📥 Scarico proxy pubblici...")
+    log(f"📥 Scarico proxy da {len(PROXY_SOURCES)} fonti...")
     
     for url in PROXY_SOURCES:
         proxies = scarica_proxy_da_url(url)
         if proxies:
-            log(f"   Trovati: {len(proxies)} proxy")
+            log(f"   ✅ Trovati: {len(proxies)} proxy")
             all_proxies.extend(proxies)
+        else:
+            log(f"   ⚠️ Nessun proxy da: {url[:50]}...")
     
     # Rimuovi duplicati
     unique = []
@@ -111,11 +162,19 @@ def verifica_proxy(proxy, timeout=5):
     try:
         host = proxy["host"]
         port = proxy["port"]
+        user = proxy.get("user", "")
+        pwd = proxy.get("pass", "")
         
-        proxies = {
-            "http": f"http://{host}:{port}",
-            "https": f"http://{host}:{port}"
-        }
+        if user and pwd:
+            proxies = {
+                "http": f"http://{user}:{pwd}@{host}:{port}",
+                "https": f"http://{user}:{pwd}@{host}:{port}"
+            }
+        else:
+            proxies = {
+                "http": f"http://{host}:{port}",
+                "https": f"http://{host}:{port}"
+            }
         
         response = requests.get(
             "http://httpbin.org/ip",
@@ -129,7 +188,7 @@ def verifica_proxy(proxy, timeout=5):
         pass
     return proxy, False
 
-def trova_proxy_funzionante(proxy_list, max_workers=30):
+def trova_proxy_funzionante(proxy_list, max_workers=50):
     """Trova il primo proxy funzionante"""
     if not proxy_list:
         return None
@@ -137,7 +196,7 @@ def trova_proxy_funzionante(proxy_list, max_workers=30):
     log(f"🔍 Cerco proxy funzionante tra {len(proxy_list)}...")
     
     with ThreadPoolExecutor(max_workers=max_workers) as executor:
-        futures = {executor.submit(verifica_proxy, p): p for p in proxy_list[:200]}
+        futures = {executor.submit(verifica_proxy, p): p for p in proxy_list[:500]}
         
         for future in as_completed(futures):
             proxy, ok = future.result()
@@ -167,7 +226,7 @@ def ottieni_proxy_automatico():
         else:
             log("⚠️ Proxy manuale non funzionante, cerco alternativo...")
     
-    # Cerca proxy pubblici
+    # Cerca proxy pubblici da tutte le fonti
     proxy_list = ottieni_proxy_pubblici()
     if proxy_list:
         proxy = trova_proxy_funzionante(proxy_list)
@@ -389,7 +448,6 @@ def esegui_bot():
                         if proxy_morto >= 3:
                             log("🔄 Troppi proxy morti, riavvio il bot...")
                             return
-                        # Ricerca nuovo proxy
                         nuovo_proxy = ottieni_proxy_automatico()
                         if nuovo_proxy:
                             log("✅ Nuovo proxy trovato, riavvio il bot...")
