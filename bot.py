@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-# bot.py - AntAutoSurf Bot con ricerca proxy automatica (MULTI-FONTE)
+# bot.py - AntAutoSurf Bot con ProxyScrape + Proxy Finder
 
 import os
 import time
@@ -22,7 +22,7 @@ EMAIL = os.environ.get("EMAIL", "kavonobenna@gmail.com")
 PASSWORD = os.environ.get("PASSWORD", "DF45$!sada")
 HEADLESS = os.environ.get("HEADLESS", "True").lower() == "true"
 
-# Proxy (opzionale - se impostato manualmente)
+# ProxyScrape (opzionale - se impostato manualmente)
 PROXY_HOST = os.environ.get("PROXY_HOST")
 PROXY_PORT = os.environ.get("PROXY_PORT")
 PROXY_USER = os.environ.get("PROXY_USER")
@@ -52,7 +52,7 @@ phash_db = carica_database()
 log(f"📊 Database phash: {len(phash_db)} hash")
 
 # ============================================================
-# PROXY FINDER - MULTI-FONTE (TUTTE LE LISTE)
+# PROXY FINDER - MULTI-FONTE (BACKUP)
 # ============================================================
 PROXY_SOURCES = [
     # ProxyScrape API
@@ -102,7 +102,6 @@ def scarica_proxy_da_url(url):
             for line in content.splitlines():
                 line = line.strip()
                 if line and not line.startswith('#') and not line.startswith('<!'):
-                    # Formato IP:PORT
                     if ':' in line and not line.startswith('http'):
                         parts = line.split(':')
                         if len(parts) == 2:
@@ -111,7 +110,6 @@ def scarica_proxy_da_url(url):
                                 proxies.append({"host": parts[0], "port": port})
                             except:
                                 pass
-                    # Formato con user:pass@host:port (ProxyScrape)
                     elif '@' in line and ':' in line:
                         parts = line.split('@')
                         if len(parts) == 2:
@@ -135,7 +133,7 @@ def scarica_proxy_da_url(url):
 def ottieni_proxy_pubblici():
     """Ottiene lista di proxy pubblici da TUTTE le fonti"""
     all_proxies = []
-    log(f"📥 Scarico proxy da {len(PROXY_SOURCES)} fonti...")
+    log(f"📥 Scarico proxy da {len(PROXY_SOURCES)} fonti (backup)...")
     
     for url in PROXY_SOURCES:
         proxies = scarica_proxy_da_url(url)
@@ -207,10 +205,13 @@ def trova_proxy_funzionante(proxy_list, max_workers=50):
     log("❌ Nessun proxy funzionante trovato!")
     return None
 
-def ottieni_proxy_automatico():
-    """Ottiene un proxy funzionante automaticamente"""
+# ============================================================
+# OTTIENI PROXY (PRIMA PROXYSCRAPE, POI FINDER)
+# ============================================================
+def ottieni_proxy():
+    """Prima cerca ProxyScrape, poi Proxy Finder come backup"""
     
-    # Se è già configurato un proxy manuale, verificalo
+    # 1. TENTA PROXYSCRAPE (se configurato)
     if PROXY_HOST and PROXY_USER:
         proxy = {
             "host": PROXY_HOST,
@@ -218,15 +219,16 @@ def ottieni_proxy_automatico():
             "user": PROXY_USER,
             "pass": PROXY_PASS
         }
-        log(f"🔍 Verifico proxy manuale: {PROXY_HOST}:{PROXY_PORT}")
+        log(f"🔍 Verifico proxy ProxyScrape: {PROXY_HOST}:{PROXY_PORT}")
         ok, _ = verifica_proxy(proxy)
         if ok:
-            log(f"✅ Proxy manuale funzionante!")
+            log(f"✅ Proxy ProxyScrape funzionante!")
             return proxy
         else:
-            log("⚠️ Proxy manuale non funzionante, cerco alternativo...")
+            log("⚠️ Proxy ProxyScrape non funzionante, cerco backup...")
     
-    # Cerca proxy pubblici da tutte le fonti
+    # 2. BACKUP: PROXY FINDER
+    log("🔍 Cerco proxy di backup...")
     proxy_list = ottieni_proxy_pubblici()
     if proxy_list:
         proxy = trova_proxy_funzionante(proxy_list)
@@ -316,8 +318,8 @@ def esegui_bot():
     log(f"🤖 AntAutoSurf Bot - {EMAIL}")
     log(f"🔇 Headless: {HEADLESS}")
     
-    # Ottieni proxy automaticamente
-    proxy = ottieni_proxy_automatico()
+    # Ottieni proxy (ProxyScrape + backup)
+    proxy = ottieni_proxy()
     
     proxy_config = None
     if proxy:
@@ -448,7 +450,7 @@ def esegui_bot():
                         if proxy_morto >= 3:
                             log("🔄 Troppi proxy morti, riavvio il bot...")
                             return
-                        nuovo_proxy = ottieni_proxy_automatico()
+                        nuovo_proxy = ottieni_proxy()
                         if nuovo_proxy:
                             log("✅ Nuovo proxy trovato, riavvio il bot...")
                             return
