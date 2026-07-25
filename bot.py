@@ -55,8 +55,6 @@ log(f"📊 Database phash: {len(phash_db)} hash")
 # PROXY FINDER - CERCA PROXY PUBBLICI GRATUITI
 # ============================================================
 PROXY_SOURCES = [
-    "https://api.proxyscrape.com/v2/?request=displayproxies&protocol=http&timeout=10000&country=all&ssl=all&anonymity=all",
-    "https://www.sslproxies.org/",
     "https://free-proxy-list.net/",
     "https://api.proxyscrape.com/?request=displayproxies&proxytype=http",
 ]
@@ -91,7 +89,7 @@ def ottieni_proxy_pubblici():
     for url in PROXY_SOURCES:
         proxies = scarica_proxy_da_url(url)
         if proxies:
-            log(f"   Trovati: {len(proxies)} proxy")
+            log(f"   ✅ Trovati: {len(proxies)} proxy")
             all_proxies.extend(proxies)
     
     # Rimuovi duplicati
